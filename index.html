@@ -1,0 +1,316 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Coin Maker</title>
+
+  <!-- Firebase client (compat for Firestore usage) -->
+  <script src="https://www.gstatic.com/firebasejs/9.24.0/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/9.24.0/firebase-auth-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/9.24.0/firebase-firestore-compat.js"></script>
+
+  <!-- TonConnect SDK & UI -->
+  <script src="https://unpkg.com/@tonconnect/sdk@0.7.0/dist/tonconnect-sdk.min.js"></script>
+  <script src="https://unpkg.com/@tonconnect/ui@2.0.8/dist/tonconnect-ui.min.js"></script>
+
+  <style>
+    :root{--bg:#071026;--card:#0b1330;--accent:#1ea7ff;--muted:#9fb3cf}
+    body{margin:0;font-family:Inter,Arial;background:linear-gradient(180deg,#021027,#071026);color:#e6eef8}
+    header{padding:16px;text-align:center;font-weight:700}
+    .app{max-width:980px;margin:0 auto;padding-bottom:120px}
+    .card{background:linear-gradient(180deg,#071526,#041028);border-radius:12px;padding:12px;margin:12px;border:1px solid rgba(255,255,255,0.03)}
+    .row{display:flex;gap:8px}
+    .field{padding:10px;border-radius:8px;border:1px solid rgba(255,255,255,0.03);background:transparent;color:inherit;width:100%}
+    .btn{background:var(--accent);color:#021021;border:none;padding:10px 12px;border-radius:10px;cursor:pointer}
+    .btn.ghost{background:transparent;border:1px solid rgba(255,255,255,0.04)}
+    .bottom{position:fixed;left:0;right:0;bottom:0;height:88px;background:#021021;display:flex;align-items:center;justify-content:space-around;padding:14px}
+    .nav-btn{flex:1;margin:0 8px;padding:12px;border-radius:8px;background:#04182a;color:#9fb3cf;font-weight:700}
+    .nav-btn.active{background:var(--accent);color:#021021}
+    .muted{color:var(--muted);font-size:13px}
+    .token{padding:10px;border-radius:10px;background:linear-gradient(180deg,#021826,#071028);margin-bottom:8px;display:flex;justify-content:space-between;align-items:center}
+  </style>
+</head>
+<body>
+<header>Coin Maker — create & trade tokens</header>
+<div class="app">
+  <section id="view-home" class="card">
+    <div style="display:flex;justify-content:space-between;align-items:center">
+      <div><strong>Листинг токенов</strong><div class="muted">Пользовательские и листинговые</div></div>
+      <div><button class="btn" onclick="loadTokens()">Обновить</button></div>
+    </div>
+    <div id="tokensContainer" style="margin-top:12px"></div>
+  </section>
+
+  <section id="view-create" class="card" style="display:none">
+    <strong>Создать токен</strong>
+    <div class="muted">Выберите тип и заполните форму</div>
+    <select id="create_type" class="field" style="margin-top:8px">
+      <option value="user">Пользовательский (динамическая цена)</option>
+      <option value="listing">Листинговый (фикс. цена)</option>
+    </select>
+    <input id="create_name" class="field" placeholder="Название" style="margin-top:8px" />
+    <input id="create_ticker" class="field" placeholder="Тикер" style="margin-top:8px" />
+    <div id="listingFields" style="display:none">
+      <input id="create_supply" class="field" placeholder="Общий объём (totalSupply)" style="margin-top:8px" type="number" />
+      <input id="create_price" class="field" placeholder="Цена за 1 токен (TON)" style="margin-top:8px" type="number" step="0.000000001" />
+    </div>
+    <div style="display:flex;gap:8px;margin-top:10px">
+      <button class="btn" onclick="createToken()">Создать</button>
+      <button class="btn ghost" onclick="clearCreate()">Очистить</button>
+    </div>
+    <div id="createResult" class="muted" style="margin-top:8px"></div>
+  </section>
+
+  <section id="view-my" class="card" style="display:none">
+    <div style="display:flex;justify-content:space-between;align-items:center">
+      <div><strong>Мои токены</strong><div class="muted">Токены, где вы владелец</div></div>
+      <div id="tonconnectRoot"></div>
+    </div>
+    <div style="margin-top:12px">
+      <div class="muted">Connected: <span id="connectedAddr">—</span></div>
+    </div>
+    <div id="myTokens" style="margin-top:12px"></div>
+  </section>
+
+  <section id="view-transfers" class="card" style="display:none">
+    <strong>Переводы (P2P)</strong>
+    <div class="muted">Выберите токен, адрес и кол-во</div>
+    <select id="transferToken" class="field" style="margin-top:8px"></select>
+    <input id="transferTo" class="field" placeholder="TON адрес получателя" style="margin-top:8px" />
+    <input id="transferAmount" class="field" placeholder="Количество" style="margin-top:8px" type="number" />
+    <div style="display:flex;gap:8px;margin-top:8px">
+      <button class="btn" onclick="sendTransfer()">Отправить</button>
+      <button class="btn ghost" onclick="loadBalances()">Мои балансы</button>
+    </div>
+    <div id="balancesArea" style="margin-top:12px"></div>
+  </section>
+
+  <section id="view-profile" class="card" style="display:none">
+    <strong>Профиль / Кошелёк</strong>
+    <div class="muted" style="margin-top:8px">TonConnect (подключение кошелька)</div>
+    <div id="tonconnect"></div>
+    <div style="margin-top:8px">Баланс TON (виртуально): <span id="virtTon">0</span></div>
+    <div style="margin-top:8px"><button class="btn" onclick="disconnectWallet()">Отключить</button></div>
+    <div id="txHistory" style="margin-top:12px"></div>
+  </section>
+</div>
+
+<div class="bottom">
+  <button id="nav-home" class="nav-btn active" onclick="show('view-home')">Главная</button>
+  <button id="nav-create" class="nav-btn" onclick="show('view-create')">Создать</button>
+  <button id="nav-my" class="nav-btn" onclick="show('view-my')">Мои</button>
+  <button id="nav-trans" class="nav-btn" onclick="show('view-transfers')">Переводы</button>
+  <button id="nav-profile" class="nav-btn" onclick="show('view-profile')">Профиль</button>
+</div>
+
+<script>
+/* ====== FIREBASE CLIENT CONFIG (вставь свои данные) ====== */
+const firebaseConfig = {
+  apiKey: "AIzaSyD5i2c8M59NaOK5bbr1dZ1t711caPfetFQ",
+  authDomain: "coin-maker-5ca2b.firebaseapp.com",
+  projectId: "coin-maker-5ca2b",
+  storageBucket: "coin-maker-5ca2b.firebasestorage.app",
+  messagingSenderId: "23493972632",
+  appId: "1:23493972632:web:fb85e0e342716c2856f6ed",
+  measurementId: "G-9KKV6R2259"
+};
+firebase.initializeApp(firebaseConfig);
+const db = firebase.firestore();
+
+/* ====== TonConnect init (uses manifest hosted at /tonconnect-manifest.json) ====== */
+let tonConnectUI = null;
+let connectedAccount = null;
+
+(async function initTon() {
+  try {
+    // manifestUrl must be absolute
+    const manifestUrl = location.origin + '/tonconnect-manifest.json';
+    // create TonConnectUI instance
+    tonConnectUI = new window.TON_CONNECT_UI.TonConnectUI({ manifestUrl, buttonRootId: 'tonconnect' });
+
+    // Also mount a second button under tonconnectRoot (for profile)
+    const tonUI2 = new window.TON_CONNECT_UI.TonConnectUI({ manifestUrl, buttonRootId: 'tonconnectRoot' });
+
+    // Hook status change to get account address
+    const tonConnect = tonUI2.tonConnect || (tonUI2.tonConnectInstance || null);
+    if (tonConnect && typeof tonConnect.onStatusChange === 'function') {
+      tonConnect.onStatusChange((payload) => {
+        if (!payload) { connectedAccount = null; document.getElementById('connectedAddr').innerText = '—'; return; }
+        const acc = payload.account?.address || (tonConnect.account && tonConnect.account.address) || null;
+        if (acc) {
+          connectedAccount = acc;
+          document.getElementById('connectedAddr').innerText = connectedAccount;
+          loadBalances(); loadMyTokens(); loadTxHistory();
+        }
+      });
+    }
+  } catch (e) {
+    console.warn('TonConnect init failed', e);
+  }
+})();
+
+/* ====== NAV ====== */
+function show(id) {
+  ['view-home','view-create','view-my','view-transfers','view-profile'].forEach(v => document.getElementById(v).style.display = 'none');
+  document.getElementById(id).style.display = 'block';
+  // nav active
+  ['nav-home','nav-create','nav-my','nav-trans','nav-profile'].forEach(b => document.getElementById(b).classList.remove('active'));
+  if (id === 'view-home') document.getElementById('nav-home').classList.add('active');
+  if (id === 'view-create') document.getElementById('nav-create').classList.add('active');
+  if (id === 'view-my') document.getElementById('nav-my').classList.add('active');
+  if (id === 'view-transfers') document.getElementById('nav-trans').classList.add('active');
+  if (id === 'view-profile') document.getElementById('nav-profile').classList.add('active');
+
+  if (id === 'view-home') loadTokens();
+  if (id === 'view-my') loadMyTokens();
+  if (id === 'view-transfers') loadBalances();
+  if (id === 'view-profile') loadTxHistory();
+}
+
+/* ====== CREATE token UI ====== */
+document.getElementById('create_type').addEventListener('change', e => {
+  document.getElementById('listingFields').style.display = e.target.value === 'listing' ? 'block' : 'none';
+});
+
+async function createToken() {
+  const type = document.getElementById('create_type').value;
+  const name = document.getElementById('create_name').value.trim();
+  const ticker = document.getElementById('create_ticker').value.trim();
+  if (!name || !ticker) return alert('Введите название и тикер');
+  const payload = { type, name, ticker };
+  if (type === 'listing') {
+    const supply = Number(document.getElementById('create_supply').value || 0);
+    const price = Number(document.getElementById('create_price').value || 0);
+    if (!supply || !price) return alert('Укажите supply и цену');
+    payload.totalSupply = supply; payload.pricePerToken = price;
+  }
+  const r = await fetch('/api/tokens/create', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(payload) });
+  const j = await r.json();
+  if (j.ok) { document.getElementById('createResult').innerText = 'Создан: ' + j.id; clearCreate(); loadTokens(); }
+  else alert('Ошибка: ' + JSON.stringify(j));
+}
+function clearCreate(){ document.getElementById('create_name').value=''; document.getElementById('create_ticker').value=''; document.getElementById('create_supply').value=''; document.getElementById('create_price').value=''; document.getElementById('createResult').innerText=''; }
+
+/* ====== LIST tokens ====== */
+async function loadTokens(){
+  const container = document.getElementById('tokensContainer'); container.innerHTML = '<div class="muted">Загрузка...</div>';
+  try {
+    const r = await fetch('/api/tokens'); const arr = await r.json();
+    container.innerHTML = '';
+    if (!arr.length) container.innerHTML = '<div class="muted">Токенов пока нет</div>';
+    arr.forEach(t => {
+      const el = document.createElement('div'); el.className = 'token';
+      let right = '';
+      if (t.type === 'listing') right = `<div>Цена: <b>${t.pricePerToken} TON</b><div class="muted">Осталось ${t.remainingSupply}/${t.totalSupply}</div><div style="margin-top:8px"><button class="btn" onclick="startBuy('${t.id}')">Купить</button></div></div>`;
+      else right = `<div>Цена: <b>${(Number(t.dynamicPrice)||0.1).toFixed(9)} TON</b><div class="muted">Выдано: ${t.supplyIssued||0}</div><div style="margin-top:8px"><button class="btn" onclick="startBuy('${t.id}')">Купить</button></div></div>`;
+      el.innerHTML = `<div><div style="font-weight:700">${t.name} (${t.ticker})</div><div class="muted">${t.type}</div></div>${right}`;
+      container.appendChild(el);
+    });
+  } catch (e) { container.innerHTML = '<div class="muted">Ошибка загрузки</div>'; console.error(e); }
+}
+
+/* ====== BUY flow ====== */
+async function startBuy(tokenId) {
+  // require TonConnect
+  if (!tonConnectUI) return alert('TonConnect не инициализирован');
+  // ensure wallet connected
+  try { await tonConnectUI.connectWallet(); } catch(e){ /* user may cancel */ }
+  // get token info
+  const tokenResp = await fetch('/api/tokens'); const tokens = await tokenResp.json();
+  const token = tokens.find(t=>t.id===tokenId); if (!token) return alert('Токен не найден');
+
+  const amount = Number(prompt('Сколько токенов купить?', '1')); if (!amount || amount <= 0) return;
+  // create sale on server
+  const create = await fetch(`/api/tokens/${tokenId}/buy`, { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ buyer: connectedAccount || null, amountTokens: amount })});
+  const cs = await create.json();
+  if (!cs.ok) return alert('Ошибка создания заявки: ' + JSON.stringify(cs));
+  // confirm prompt
+  if (!confirm(`Купить ${amount} ${token.ticker} за ${cs.cost} TON?`)) return;
+  // amount in nanotons
+  const amountNano = (BigInt(Math.round(Number(cs.cost) * 1e9))).toString();
+  try {
+    const txRes = await tonConnectUI.sendTransaction({ validUntil: Math.floor(Date.now()/1000)+600, messages: [{ address: cs.receiver, amount: amountNano }]});
+    // try extract hash
+    let txHash = null;
+    try {
+      txHash = txRes?.in_message?.hash || txRes?.inMessage?.hash || txRes?.hash || txRes?.messageHash || (Array.isArray(txRes) && (txRes[0]?.in_message?.hash || txRes[0]?.hash)) || null;
+    } catch(e){}
+    // confirm on server
+    const conf = await fetch(`/api/sales/${cs.saleId}/confirm`, { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ txHash })});
+    const jc = await conf.json();
+    if (jc.ok) { alert('Покупка подтверждена'); loadTokens(); loadBalances(); loadMyTokens(); }
+    else alert('Транзакция отправлена. Подтверждение: ' + JSON.stringify(jc));
+  } catch(e) { console.error(e); alert('Ошибка отправки транзакции: ' + (e.message || e)); }
+}
+
+/* ====== TonConnect status handling (listen for status changes) ====== */
+(function mountTonButton() {
+  try {
+    if (window.TON_CONNECT_UI && window.TON_CONNECT_UI.TonConnectUI) {
+      // create second UI for tonconnectRoot to trigger status change events
+      const ui = new window.TON_CONNECT_UI.TonConnectUI({ manifestUrl: location.origin + '/tonconnect-manifest.json', buttonRootId: 'tonconnectRoot' });
+      const ton = ui.tonConnect || (ui.tonConnectInstance || null);
+      if (ton && typeof ton.onStatusChange === 'function') {
+        ton.onStatusChange(payload => {
+          if (!payload) { connectedAccount = null; document.getElementById('connectedAddr').innerText = '—'; return; }
+          const acc = payload.account?.address || (ton.account && ton.account.address) || null;
+          if (acc) { connectedAccount = acc; document.getElementById('connectedAddr').innerText = connectedAccount; loadBalances(); loadMyTokens(); loadTxHistory(); }
+        });
+      }
+    }
+  } catch(e) { console.warn('mount ton fail', e); }
+})();
+
+function disconnectWallet(){ try { if (tonConnectUI && tonConnectUI.tonConnect) tonConnectUI.tonConnect.disconnect(); } catch(e){} connectedAccount = null; document.getElementById('connectedAddr').innerText = '—'; }
+
+/* ====== P2P transfer ====== */
+async function sendTransfer(){
+  if (!connectedAccount) return alert('Подключите кошелёк в профиле');
+  const tokenId = document.getElementById('transferToken').value;
+  const to = document.getElementById('transferTo').value.trim();
+  const amount = Number(document.getElementById('transferAmount').value);
+  if (!tokenId || !to || !amount) return alert('Заполните поля');
+  const res = await fetch('/api/transfer', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ tokenId, from: connectedAccount, to, amount })});
+  const j = await res.json();
+  if (j.ok) { alert('Перевод выполнен'); loadBalances(); } else alert('Ошибка: ' + JSON.stringify(j));
+}
+
+/* ====== Balances/My tokens/History ====== */
+async function loadBalances(){
+  if (!connectedAccount) return;
+  const r = await fetch('/api/balances/' + encodeURIComponent(connectedAccount));
+  const arr = await r.json();
+  const area = document.getElementById('balancesArea'); area.innerHTML = '';
+  if (!arr.length) area.innerHTML = '<div class="muted">Балансов нет</div>';
+  else arr.forEach(b => { const d=document.createElement('div'); d.className='token'; d.innerHTML=`<div>${b.tokenId}</div><div class="muted">Amount: ${b.amount}</div>`; area.appendChild(d); });
+}
+
+async function loadMyTokens(){
+  const r = await fetch('/api/tokens'); const arr = await r.json();
+  const mine = arr.filter(t => t.owner && connectedAccount && t.owner.toLowerCase() === (connectedAccount||'').toLowerCase());
+  const node = document.getElementById('myTokens'); node.innerHTML = '';
+  if (!mine.length) node.innerHTML = '<div class="muted">У вас нет токенов</div>';
+  else mine.forEach(t => { const el=document.createElement('div'); el.className='token'; el.innerHTML=`<div><strong>${t.name} (${t.ticker})</strong><div class="muted">${t.type}</div></div><div><button class="btn" onclick="viewToken('${t.id}')">Открыть</button></div>`; node.appendChild(el); });
+  // populate transfer token select
+  const sel = document.getElementById('transferToken'); sel.innerHTML = '<option value="">Выберите токен</option>';
+  arr.forEach(t => { const opt=document.createElement('option'); opt.value=t.id; opt.innerText=`${t.name} (${t.ticker})`; sel.appendChild(opt); });
+}
+
+function viewToken(id){ alert('Open token ' + id); }
+
+async function loadTxHistory(){
+  if (!connectedAccount) return;
+  const r = await fetch('/api/history/' + encodeURIComponent(connectedAccount));
+  const arr = await r.json();
+  const node = document.getElementById('txHistory'); node.innerHTML = '';
+  if (!arr.length) node.innerHTML = '<div class="muted">Нет истории</div>';
+  else arr.forEach(it => { const div=document.createElement('div'); div.className='muted'; div.innerText = `${new Date(it.when).toLocaleString()} • ${it.type || ''} • ${it.amount || it.amountTokens || ''}`; node.appendChild(div); });
+}
+
+/* initial */
+loadTokens();
+setInterval(()=> { if (connectedAccount) { loadBalances(); loadMyTokens(); loadTxHistory(); } }, 30000);
+</script>
+</body>
+</html>
